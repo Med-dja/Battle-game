@@ -25,8 +25,8 @@ export default function Leaderboard() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-3xl font-bold mb-8 text-center">Classement</h1>
+    <div className="mx-auto">
+      <h1 className="text-3xl font-bold mb-8 text-center text-gray-900">Classement</h1> {/* Ensure title is visible */}
 
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
         <div className="flex border-b">
@@ -57,9 +57,9 @@ export default function Leaderboard() {
         </div>
 
         {loading ? (
-          <div className="text-center py-8">Chargement...</div>
+          <div className="text-center py-8 text-gray-700">Chargement...</div>
         ) : leaderboard.length === 0 ? (
-          <div className="text-center py-8">Aucune donnée disponible pour ce classement.</div>
+          <div className="text-center py-8 text-gray-700">Aucune donnée disponible pour ce classement.</div>
         ) : (
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -100,10 +100,13 @@ export default function Leaderboard() {
               {leaderboard.map((entry, index) => {
                 const player = leaderboardType === 'global' ? entry : entry.user;
                 const stats = leaderboardType === 'global' ? entry.stats : entry.stats;
-                
+
+                // Ensure player and stats exist before trying to access properties
+                if (!player || !stats) return null;
+
                 return (
                   <tr key={player._id || index}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900"> {/* Changed text color */}
                       {index + 1}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
@@ -119,18 +122,18 @@ export default function Leaderboard() {
                             <span className="text-sm">{player.username?.charAt(0).toUpperCase()}</span>
                           )}
                         </div>
-                        <div className="text-sm font-medium text-gray-900">
+                        <div className="text-sm font-medium text-gray-900"> {/* Ensure text color */}
                           {player.username}
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700"> {/* Changed text color */}
                       {stats?.wins || 0}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700"> {/* Changed text color */}
                       {stats?.gamesPlayed || 0}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700"> {/* Changed text color */}
                       {stats?.points || 0}
                     </td>
                   </tr>

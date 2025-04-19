@@ -44,8 +44,9 @@ export default function Profile() {
 
   if (!user) return null;
 
+  // Remove container and padding classes, handled by layout.js
   return (
-    <div className="container mx-auto px-4 py-8">
+    <div className="mx-auto">
       <div className="bg-white shadow rounded-lg p-6 mb-8">
         <div className="flex items-center">
           <div className="h-20 w-20 rounded-full bg-blue-500 flex items-center justify-center text-white text-2xl font-bold mr-6">
@@ -60,14 +61,14 @@ export default function Profile() {
             )}
           </div>
           <div>
-            <h1 className="text-2xl font-bold">{user.username}</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{user.username}</h1>
             <p className="text-gray-600">{user.email}</p>
           </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-white p-6 rounded-lg shadow text-gray-900">
           <h2 className="text-lg font-semibold mb-2">Statistiques</h2>
           <div className="space-y-2">
             <p>
@@ -88,7 +89,7 @@ export default function Profile() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-white p-6 rounded-lg shadow text-gray-900">
           <h2 className="text-lg font-semibold mb-2">Classement</h2>
           <div className="space-y-2">
             <p>
@@ -100,7 +101,7 @@ export default function Profile() {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-lg shadow">
+        <div className="bg-white p-6 rounded-lg shadow text-gray-900">
           <h2 className="text-lg font-semibold mb-2">Compte</h2>
           <div className="space-y-2">
             <p>
@@ -115,7 +116,7 @@ export default function Profile() {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow">
+      <div className="bg-white rounded-lg shadow text-gray-900">
         <h2 className="text-lg font-semibold px-6 py-4 border-b">Historique des parties</h2>
 
         {loading ? (

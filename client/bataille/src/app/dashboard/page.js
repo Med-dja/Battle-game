@@ -45,22 +45,27 @@ export default function Dashboard() {
       if (status.success) {
         if (status.matched) {
           setMatchmakingStatus('matched');
-          toast.success('Partie trouvée !');
-          fetchGames();
-        } else {
+          // Toast is handled by the 'matchmaking:matched' listener now
+        } else if (status.message === 'Ajouté à la file d\'attente') {
           setMatchmakingStatus('searching');
           toast.success('Recherche d\'un adversaire...');
+        } else if (status.removed) { // Check if removal was successful
+          setMatchmakingStatus('idle');
+          toast('Recherche annulée'); // Show toast on confirmation
+        } else if (!status.removed && status.message === 'N\'était pas dans la file d\'attente') {
+          // If already removed or not in queue, ensure state is idle
+          setMatchmakingStatus('idle');
         }
       } else {
-        setMatchmakingStatus('idle');
+        setMatchmakingStatus('idle'); // Go back to idle on error
         toast.error(status.message);
       }
     });
 
     socket.on('matchmaking:matched', (data) => {
       console.log('Matchmaking matched received:', data);
-      setMatchmakingStatus('matched');
-      toast.success('Partie trouvée !');
+      setMatchmakingStatus('matched'); // Keep this for potential immediate feedback
+      toast.success('Partie trouvée ! Redirection...');
       router.push(`/game/${data.gameId}`);
     });
   };
@@ -98,25 +103,30 @@ export default function Dashboard() {
   };
 
   const handleJoinMatchmaking = () => {
+    // Optimistically set to searching, will be confirmed by socket event
     setMatchmakingStatus('searching');
     const success = joinMatchmaking();
     if (!success) {
+      // If immediate failure (e.g., no socket), revert state
       setMatchmakingStatus('idle');
     }
+    // Don't show toast here, wait for 'matchmaking:status' event
   };
 
   const handleCancelMatchmaking = () => {
+    // Just emit the cancel event. The UI update will happen
+    // when the 'matchmaking:status' event with { removed: true } is received.
     const success = cancelMatchmaking();
-    if (success) {
-      setMatchmakingStatus('idle');
-      toast.info('Recherche annulée');
-    } else {
-      toast.error('Erreur lors de l\'annulation de la recherche');
+    if (!success) {
+      // Handle potential immediate failure (e.g., no socket)
+      toast.error('Erreur de connexion pour annuler la recherche');
     }
+    // Do not change matchmakingStatus here or show toast optimistically
   };
 
   return (
-    <div className="container mx-auto px-4 py-8">
+    // Remove container and padding classes, handled by layout.js
+    <div className="mx-auto">
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold">Mes Parties</h1>
         <div className="space-x-4">
@@ -128,7 +138,7 @@ export default function Dashboard() {
               <Button onClick={createGame}>Nouvelle Partie</Button>
             </>
           ) : matchmakingStatus === 'searching' ? (
-            <Button variant="danger" onClick={handleCancelMatchmaking}>
+            <Button variant="danger" onClick={handleCancelMatchmaking} loading={false}> {/* Ensure loading state is managed if needed */}
               Annuler la recherche
             </Button>
           ) : null}

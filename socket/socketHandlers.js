@@ -84,41 +84,75 @@ exports.setupSocketHandlers = (io) => {
     
     socket.on('game:ready', async (gameId) => {
       try {
-        const game = await Game.findById(gameId);
+        const game = await Game.findById(gameId).populate('players.user', 'username'); // Populate user info
         if (!game) return;
-        
-        // Notify opponent
-        socket.to(`game:${gameId}`).emit('game:opponent-ready');
+
+        // Check if both players are now ready
+        const allReady = game.players.length === 2 && game.players.every(player => player.ready);
+        if (allReady && game.status === 'setup') {
+           // Update game state (handled by API, but we can broadcast the change)
+           // Let's broadcast the updated game state to both players
+           io.to(`game:${gameId}`).emit('game:state-update', game);
+        } else {
+          // Notify opponent that this player is ready
+          socket.to(`game:${gameId}`).emit('game:opponent-ready');
+        }
       } catch (error) {
         console.error('Game ready error:', error);
       }
     });
-    
-    socket.on('game:move', async ({ gameId, x, y }) => {
+
+    socket.on('game:move', async ({ gameId, x, y, result }) => { // Expect result from client API call
       try {
-        const game = await Game.findById(gameId);
+        const game = await Game.findById(gameId)
+          .populate('players.user', 'username')
+          .populate('currentTurn', 'username')
+          .populate('winner', 'username');
+
         if (!game) return;
-        
-        // The actual move is processed by the API endpoint
-        // This just notifies the opponent
-        socket.to(`game:${gameId}`).emit('game:opponent-moved', { x, y });
+
+        // Broadcast the move result and the updated game state to both players
+        io.to(`game:${gameId}`).emit('game:state-update', game);
+        // Optionally, emit a specific event for the move result if needed elsewhere
+        // io.to(`game:${gameId}`).emit('game:move-result', { userId: socket.userId, x, y, result });
+
       } catch (error) {
-        console.error('Game move error:', error);
+        console.error('Game move broadcast error:', error);
       }
     });
-    
+
     // Chat events
     socket.on('chat:message', async ({ gameId, message }) => {
       try {
-        // Create message in database through controller to ensure validation
-        // This is just for immediate feedback in the UI
-        socket.to(`game:${gameId}`).emit('chat:message', {
-          sender: socket.userId,
-          content: message,
-          timestamp: new Date()
-        });
+        // Assume message object contains { content: string, isPredefined: boolean }
+        if (!message || !message.content || message.content.trim() === '') {
+          // Basic validation on server too
+          return;
+        }
+
+        // Fetch sender username (alternative to populating after save)
+        const sender = await User.findById(socket.userId).select('username');
+        if (!sender) return; // User not found
+
+        // Create message object to broadcast
+        const messageData = {
+          sender: { _id: socket.userId, username: sender.username }, // Include sender info
+          content: message.content,
+          isPredefined: message.isPredefined || false,
+          timestamp: new Date(),
+          game: gameId // Include gameId if needed on client
+        };
+
+        // Broadcast to everyone in the game room, including the sender
+        io.to(`game:${gameId}`).emit('chat:message', messageData);
+
+        // Note: Saving the message to DB is still handled by the API POST /api/messages/games/:gameId
+        // This socket handler is just for real-time broadcast.
+
       } catch (error) {
-        console.error('Chat message error:', error);
+        console.error('Chat message broadcast error:', error);
+        // Optionally emit an error back to the sender
+        // socket.emit('chat:error', { message: 'Failed to send message' });
       }
     });
     

@@ -27,7 +27,7 @@ export default function RootLayout({ children }) {
       >
         <AuthProvider>
           <Navbar />
-          <main className="min-h-screen bg-gray-100">
+          <main className="min-h-screen bg-gray-100 p-4 sm:p-6 lg:p-8">
             {children}
           </main>
           <Toaster position="top-right" />

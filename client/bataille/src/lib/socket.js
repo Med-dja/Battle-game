@@ -37,7 +37,15 @@ const setupGlobalListeners = (socket) => {
   // Setup listeners
   socket.on('matchmaking:status', (status) => {
     console.log('Matchmaking status:', status);
-    if (!status.success) {
+    if (status.success) {
+      if (status.matched) {
+        setMatchmakingStatus('matched');
+        toast.success('Partie trouvée !');
+      } else {
+        setMatchmakingStatus('searching');
+        toast.success('Recherche d\'un adversaire...'); 
+      }
+    } else {
       toast.error(status.message);
     }
   });
