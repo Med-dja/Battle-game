@@ -1,0 +1,30 @@
+{
+  "name": "bataille",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "next": "15.3.1",
+    "axios": "^1.6.2",
+    "socket.io-client": "^4.7.2",
+    "react-hot-toast": "^2.4.1",
+    "zustand": "^4.4.7",
+    "jwt-decode": "^4.0.0",
+    "react-icons": "^4.12.0",
+    "clsx": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "tailwindcss": "^4",
+    "eslint": "^9",
+    "eslint-config-next": "15.3.1",
+    "@eslint/eslintrc": "^3"
+  }
+}

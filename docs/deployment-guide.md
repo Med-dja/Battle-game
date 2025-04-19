@@ -124,7 +124,7 @@ Ce guide détaille les étapes pour déployer l'application Bataille Navale en p
      server_name yourdomain.com www.yourdomain.com;
 
      location / {
-       proxy_pass http://localhost:5000;  # Le port sur lequel votre app Node.js s'exécute
+       proxy_pass http://localhost:4000;  # Le port sur lequel votre app Node.js s'exécute
        proxy_http_version 1.1;
        proxy_set_header Upgrade $http_upgrade;
        proxy_set_header Connection 'upgrade';
@@ -134,7 +134,7 @@ Ce guide détaille les étapes pour déployer l'application Bataille Navale en p
 
      # Configuration pour Socket.IO
      location /socket.io/ {
-       proxy_pass http://localhost:5000;
+       proxy_pass http://localhost:4000;
        proxy_http_version 1.1;
        proxy_set_header Upgrade $http_upgrade;
        proxy_set_header Connection "upgrade";
@@ -201,7 +201,7 @@ Ce guide détaille les étapes pour déployer l'application Bataille Navale en p
 3. **Modifier le serveur pour utiliser le port attribué par Heroku**:
    Dans `server.js`, assurez-vous que votre application écoute sur le port fourni par Heroku:
    ```javascript
-   const PORT = process.env.PORT || 5000;
+   const PORT = process.env.PORT || 4000;
    ```
 
 ### 3. Déployer l'application
@@ -250,7 +250,7 @@ Ce guide détaille les étapes pour déployer l'application Bataille Navale en p
    RUN npm run build:client
 
    # Exposer le port
-   EXPOSE 5000
+   EXPOSE 4000
 
    # Commande de démarrage
    CMD ["node", "server.js"]
@@ -263,7 +263,7 @@ Ce guide détaille les étapes pour déployer l'application Bataille Navale en p
      app:
        build: .
        ports:
-         - "80:5000"
+         - "80:4000"
        environment:
          - NODE_ENV=production
          - MONGO_URI=mongodb://mongo:27017/bataille-navale

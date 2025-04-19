@@ -33,6 +33,17 @@ exports.registerUser = async (req, res) => {
       res.status(400).json({ message: 'Données utilisateur invalides' });
     }
   } catch (error) {
+    // Enhanced error handling for validation errors
+    if (error.name === 'ValidationError') {
+      const errors = {};
+      for (const key in error.errors) {
+        errors[key] = error.errors[key].message;
+      }
+      return res.status(400).json({
+        message: 'Erreur de validation',
+        errors
+      });
+    }
     res.status(500).json({ message: 'Erreur serveur', error: error.message });
   }
 };
