@@ -324,7 +324,6 @@ export default function GamePage() {
     try {
       // Optimistic UI update (optional, makes it feel faster)
       // setMyShots(prev => [...prev, { x, y, hit: null, timestamp: new Date() }]); // Mark as pending
-      // setIsMyTurn(false); // Assume turn changes
 
       const response = await axios.post(`/games/${gameId}/move`, { x, y });
       // API response should contain the updated game state
@@ -337,7 +336,8 @@ export default function GamePage() {
       if (result.hit) {
         if (result.sunk) playSound(sunkSoundUrl);
         else playSound(hitSoundUrl);
-        toast.success(`Touché${result.sunk ? ' et coulé !' : ' !'}`);
+        // Update toast message for hit
+        toast.success(`Touché${result.sunk ? ' et coulé !' : ' !'} Vous rejouez.`);
       } else {
         playSound(missSoundUrl);
         toast('Manqué !');

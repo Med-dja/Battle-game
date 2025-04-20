@@ -143,8 +143,11 @@ gameSchema.methods.recordShot = function(userId, x, y) {
   // Update last action timestamp
   shooter.lastAction = new Date();
   
-  // Change turn
-  this.currentTurn = opponent.user;
+  // Change turn ONLY if the shot missed
+  if (!hitShip) {
+    this.currentTurn = opponent.user;
+  }
+  // If it was a hit, this.currentTurn remains the same, allowing the player to play again.
   
   // Check if game is over
   this.checkGameOver();
