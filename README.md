@@ -119,13 +119,16 @@ bataille-navale/
 - POST `/api/users/reset-password` - Réinitialisation du mot de passe
 
 ### Jeu
-- GET `/api/games` - Liste des parties actives
+- GET `/api/games` - Liste des parties actives/en attente de l'utilisateur
 - POST `/api/games` - Créer une nouvelle partie
+- GET `/api/games/:gameId` - Obtenir les détails d'une partie
 - POST `/api/games/:gameId/join` - Rejoindre une partie
 - PUT `/api/games/:gameId/ships` - Placer les navires
 - POST `/api/games/:gameId/move` - Faire un mouvement
-- PUT `/api/games/:gameId/save` - Mettre en pause une partie
-- PUT `/api/games/:gameId/resume` - Reprendre une partie
+- POST `/api/games/:gameId/quit` - Abandonner une partie (compte comme une défaite)
+- DELETE `/api/games/:gameId` - Supprimer une partie (depuis le tableau de bord)
+- PUT `/api/games/:gameId/save` - Mettre en pause une partie (Non implémenté/utilisé actuellement)
+- PUT `/api/games/:gameId/resume` - Reprendre une partie (Non implémenté/utilisé actuellement)
 
 ### Classement
 - GET `/api/leaderboard/global` - Classement global

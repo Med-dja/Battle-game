@@ -63,7 +63,7 @@ export default function Login() {
             </Alert>
           )}
           
-          <form className="space-y-6" onSubmit={handleSubmit}>
+          <form className="space-y-6 text-black" onSubmit={handleSubmit}>
             <Input
               id="email"
               name="email"

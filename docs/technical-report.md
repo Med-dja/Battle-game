@@ -87,7 +87,6 @@ bataille-navale/
 
 ### Outils de développement
 
-- **Vite** : Outil de build rapide pour le frontend
 - **Nodemon** : Redémarrage automatique du serveur pendant le développement
 - **ESLint** : Linting du code
 - **Concurrently** : Exécution simultanée des scripts npm
@@ -122,11 +121,13 @@ const protect = async (req, res, next) => {
 #### Modèle de données
 
 Le modèle de données `Game` est au cœur du système. Il gère :
-- État du jeu (attente, configuration, actif, pause, terminé)
+- État du jeu (attente, configuration, actif, pause, terminé, abandonné)
 - Gestion des joueurs et de leur flotte
 - Position des navires
 - Historique des tirs
 - Système de tours
+- Références aux messages du chat
+- Horodatages de début et de fin
 
 #### Placement des navires
 
@@ -158,6 +159,10 @@ gameSchema.methods.recordShot = function(userId, x, y) {
   };
 };
 ```
+
+#### Gestion du cycle de vie de la partie
+- Création, attente de joueur, configuration, jeu actif, fin de partie (victoire/défaite), abandon.
+- Possibilité pour un joueur de supprimer une partie de son historique/tableau de bord via une requête `DELETE`.
 
 ### 3. Communication en temps réel
 

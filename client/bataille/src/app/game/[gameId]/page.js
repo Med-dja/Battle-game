@@ -9,6 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import Button from '@/components/ui/Button';
 import ShipPlacementBoard from '@/components/game/ShipPlacementBoard';
 import ChatBox from '@/components/game/ChatBox'; // Assuming ChatBox takes messages and onSendMessage props
+import ConfirmationModal from '@/components/ui/ConfirmationModal'; // Assuming you have a confirmation modal
 
 // Use public folder path for sounds in Next.js (no import, just string URLs)
 const hitSoundUrl = '/sounds/hit.mp3';
@@ -35,6 +36,8 @@ export default function GamePage() {
   const [opponent, setOpponent] = useState(null);
   const [chatMessages, setChatMessages] = useState([]); // State for chat messages
   const gameRef = useRef(game); // Ref to access latest game state in callbacks
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false); // State for quit confirmation
+  const [chatLoading, setChatLoading] = useState(false); // Add chat loading state
   // Removed gameVersion state: React should re-render automatically on state changes
   // const [gameVersion, setGameVersion] = useState(0);
 
@@ -120,15 +123,19 @@ export default function GamePage() {
 
   // Fetch initial chat messages
   const fetchChatMessages = useCallback(async () => {
-    if (!gameId || !user) return;
+    if (!gameId || !game) return; // Add check for game object
+
+    setChatLoading(true);
     try {
       const response = await axios.get(`/messages/games/${gameId}`);
       setChatMessages(response.data);
     } catch (error) {
       console.error('Error fetching chat messages:', error);
       // toast.error('Erreur chargement messages chat'); // Optional: notify user
+    } finally {
+      setChatLoading(false);
     }
-  }, [gameId, user]);
+  }, [gameId, game]);
 
   // --- Sound effect helpers ---
   const playSound = useCallback((url) => {
@@ -248,6 +255,13 @@ export default function GamePage() {
     // No cleanup here; handled in socket effect above
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, authLoading, gameId, router]);
+
+  // Effect to fetch messages when game state is updated (e.g., after initial load)
+  useEffect(() => {
+    if (game && game.status !== 'loading') { // Check if game is loaded
+        fetchChatMessages();
+    }
+  }, [game, fetchChatMessages]); // Re-fetch messages if game object changes
 
   const cleanup = useCallback(() => {
     const socket = getSocket();
@@ -376,6 +390,24 @@ export default function GamePage() {
       toast.error(error.response?.data?.message || 'Erreur envoi message');
     }
   };
+
+  // Handle quitting the game
+  const handleQuitGame = useCallback(async () => {
+    if (!gameId) return;
+
+    try {
+      setShowQuitConfirm(false); // Close modal immediately
+      // API call to quit the game
+      await axios.post(`/games/${gameId}/quit`);
+      toast('Vous avez abandonné la partie.');
+      // The backend will emit 'game:state-update' which will update the UI
+      // No need to manually push router here, let the state update handle it
+    } catch (error) {
+      console.error('Error quitting game:', error);
+      // Error toast is likely handled by the axios interceptor
+      // toast.error(error.response?.data?.message || 'Erreur lors de l\'abandon');
+    }
+  }, [gameId]); // Add dependencies
 
   // Generate game board grid cells - Adjusted for Responsiveness
   const renderCells = (isMyBoard) => {
@@ -603,20 +635,44 @@ export default function GamePage() {
              userId={user._id} // Pass userId for message alignment
              messages={chatMessages} // Pass messages state
              onSendMessage={handleSendMessage} // Pass the send message handler
+             loading={chatLoading} // Pass loading state
            />
         </div>
       </div>
 
-      {/* Back Button - Ensure it shows reliably */}
-      {(game.status === 'completed' || game.status === 'abandoned') && (
-        <div className="flex justify-center mt-8">
-          <Button
-            variant="secondary"
-            onClick={() => router.push('/dashboard')}
-          >
-            Retour au tableau de bord
-          </Button>
-        </div>
+      {/* Action Buttons */}
+      <div className="flex justify-center mt-8 space-x-4">
+         {/* Show Quit button only during playable states */}
+         {isPlayer && ['setup', 'active', 'paused'].includes(game.status) && (
+           <Button
+             variant="danger"
+             onClick={() => setShowQuitConfirm(true)} // Open confirmation modal
+           >
+             Abandonner la partie
+           </Button>
+         )}
+         {/* Back Button - Show after game ends or if not a player */}
+         {(!isPlayer || game.status === 'completed' || game.status === 'abandoned') && (
+           <Button
+             variant="secondary"
+             onClick={() => router.push('/dashboard')}
+           >
+             Retour au tableau de bord
+           </Button>
+         )}
+      </div>
+
+      {/* Quit Confirmation Modal */}
+      {showQuitConfirm && (
+        <ConfirmationModal
+          title="Abandonner la partie"
+          message="Êtes-vous sûr de vouloir abandonner ? Cela comptera comme une défaite."
+          confirmText="Abandonner"
+          cancelText="Annuler"
+          onConfirm={handleQuitGame}
+          onCancel={() => setShowQuitConfirm(false)}
+          variant="danger"
+        />
       )}
     </div>
   );

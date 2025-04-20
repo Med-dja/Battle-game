@@ -24,42 +24,64 @@ exports.createGame = async (req, res) => {
 exports.joinGame = async (req, res) => {
   try {
     const { gameId } = req.params;
-    
-    const game = await Game.findById(gameId);
-    
+    const io = getIo(); // Get socket.io instance
+
+    let game = await Game.findById(gameId);
+
     if (!game) {
       return res.status(404).json({ message: 'Partie non trouvée' });
     }
-    
+
+    // Check if game is waiting for players
     if (game.status !== 'waiting') {
-      return res.status(400).json({ message: 'Cette partie n\'est plus disponible' });
+      return res.status(400).json({ message: 'Impossible de rejoindre cette partie maintenant' });
     }
-    
+
     if (game.players.length >= 2) {
       return res.status(400).json({ message: 'La partie est complète' });
     }
-    
+
     // Check if user already in game
     const alreadyInGame = game.players.some(
       player => player.user.toString() === req.user._id.toString()
     );
-    
+
     if (alreadyInGame) {
-      return res.status(400).json({ message: 'Vous êtes déjà dans cette partie' });
+      // Allow rejoining if already in game (e.g., browser refresh)
+      // Fetch populated game and return
+      const populatedGame = await Game.findById(gameId)
+        .populate('players.user', 'username avatar')
+        .populate('currentTurn', 'username')
+        .populate('winner', 'username');
+      return res.json(populatedGame);
+      // Original logic: return res.status(400).json({ message: 'Vous êtes déjà dans cette partie' });
     }
-    
+
     // Add player to game
     game.players.push({
       user: req.user._id
+      // board and ships will be added in placement phase
     });
-    
-    // Update game status
-    game.status = 'setup';
-    
+
+    // Update game status if now full
+    if (game.players.length === 2) {
+      game.status = 'setup'; // Move to ship placement phase
+    }
+
     await game.save();
-    
-    res.json(game);
+
+    // Fetch the fully populated game state to send back and broadcast
+    const populatedGame = await Game.findById(gameId)
+      .populate('players.user', 'username avatar')
+      .populate('currentTurn', 'username')
+      .populate('winner', 'username');
+
+    // Notify players in the room about the state change (player joined/status update)
+    io.to(`game:${gameId}`).emit('game:state-update', populatedGame);
+
+    res.json(populatedGame); // Send populated game back to the joining player
   } catch (error) {
+    console.error("Error in joinGame:", error); // Add logging
     res.status(500).json({ message: 'Erreur serveur', error: error.message });
   }
 };
@@ -270,33 +292,132 @@ exports.getMyGames = async (req, res) => {
   }
 };
 
-// Get game details
+// Get game details - Ensure population here too for consistency
 exports.getGameById = async (req, res) => {
   try {
     const { gameId } = req.params;
-    
+
     const game = await Game.findById(gameId)
       .populate('players.user', 'username avatar') // Added avatar
       .populate('currentTurn', 'username')
       .populate('winner', 'username');
-    
+
     if (!game) {
       return res.status(404).json({ message: 'Partie non trouvée' });
     }
-    
-    // Check if user is in game or if game is completed (allow viewing completed games)
+
+    // Check if user is in game OR if game is viewable (waiting, completed, abandoned)
     const isPlayerInGame = game.players.some(
       player => player.user._id.toString() === req.user._id.toString()
     );
-    
-    if (!isPlayerInGame && game.status !== 'completed' && game.status !== 'abandoned') { // Allow viewing finished games
+    const isViewableStatus = ['waiting', 'completed', 'abandoned'].includes(game.status);
+
+    if (!isPlayerInGame && !isViewableStatus) { // Allow viewing waiting, completed, or abandoned games
       return res.status(403).json({ message: 'Vous n\'avez pas accès à cette partie' });
     }
-    
+
     res.json(game);
   } catch (error) {
     console.error("Error in getGameById:", error); // Add logging
     res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// Quit game (Abandon)
+exports.quitGame = async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const userId = req.user._id;
+    const io = getIo();
+
+    const game = await Game.findById(gameId);
+
+    if (!game) {
+      return res.status(404).json({ message: 'Partie non trouvée' });
+    }
+
+    // Check if user is a player
+    const playerIndex = game.players.findIndex(p => p.user.toString() === userId.toString());
+    if (playerIndex === -1) {
+      return res.status(403).json({ message: 'Vous n\'êtes pas dans cette partie' });
+    }
+
+    // Check if game can be abandoned
+    if (!['setup', 'active', 'paused'].includes(game.status)) {
+      return res.status(400).json({ message: 'Impossible d\'abandonner cette partie maintenant' });
+    }
+
+    // Find opponent
+    const opponentPlayer = game.players.find(p => p.user.toString() !== userId.toString());
+
+    // Update game state
+    game.status = 'abandoned';
+    game.endTime = new Date();
+    if (opponentPlayer) {
+      game.winner = opponentPlayer.user; // Opponent wins
+    } else {
+      // If opponent already left or wasn't there, no winner is set, just abandoned
+      game.winner = null;
+    }
+
+    await game.save();
+
+    // Update player stats if there was an opponent to win
+    if (game.winner) {
+      await updatePlayerStats(game);
+    }
+
+    // Re-fetch populated game to broadcast and respond
+    const populatedGame = await Game.findById(gameId)
+      .populate('players.user', 'username avatar')
+      .populate('currentTurn', 'username')
+      .populate('winner', 'username');
+
+    // Broadcast the updated state
+    io.to(`game:${gameId}`).emit('game:state-update', populatedGame);
+
+    res.json(populatedGame);
+
+  } catch (error) {
+    console.error("Error in quitGame:", error);
+    res.status(500).json({ message: 'Erreur serveur', error: error.message });
+  }
+};
+
+// Delete a game
+exports.deleteGame = async (req, res) => {
+  try {
+    const { gameId } = req.params;
+    const userId = req.user._id;
+
+    const game = await Game.findById(gameId);
+
+    if (!game) {
+      return res.status(404).json({ message: 'Partie non trouvée' });
+    }
+
+    // Check if the user is one of the players in the game
+    const isPlayerInGame = game.players.some(
+      player => player.user.toString() === userId.toString()
+    );
+
+    if (!isPlayerInGame) {
+      // Only players can delete the game
+      return res.status(403).json({ message: 'Vous n\'êtes pas autorisé à supprimer cette partie' });
+    }
+
+    // Optional: Add checks here if you only want to allow deletion for certain statuses
+    // e.g., if (!['completed', 'abandoned', 'waiting'].includes(game.status)) { ... }
+
+    await Game.findByIdAndDelete(gameId);
+
+    // Note: Associated messages are currently NOT deleted. Add logic here if needed.
+
+    res.status(200).json({ message: 'Partie supprimée avec succès' });
+
+  } catch (error) {
+    console.error("Error in deleteGame:", error);
+    res.status(500).json({ message: 'Erreur serveur lors de la suppression', error: error.message });
   }
 };
 
