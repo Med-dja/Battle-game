@@ -141,12 +141,6 @@ bataille-navale/
 - POST `/api/messages/games/:gameId` - Envoyer un message
 - GET `/api/messages/games/:gameId` - Récupérer les messages d'une partie
 
-## 🧪 Tests
-
-```bash
-# Lancer les tests
-npm test
-```
 
 ## 📋 Tâches à venir
 
@@ -159,7 +153,7 @@ npm test
 
 ## 👥 Contributeurs
 
-- Étudiants du Master 1 GL - UIK Tiaret
+- Med-dja (Github)
 
 ## 📄 Licence
 
