@@ -3,8 +3,9 @@ const User = require('../models/userModel');
 const Game = require('../models/gameModel');
 const Message = require('../models/messageModel');
 const { addToQueue, removeFromQueue } = require('../services/matchmakingService');
+const { getIo } = require('./socketServer'); // Import getIo
 
-exports.setupSocketHandlers = (io) => {
+exports.setupSocketHandlers = (io) => { // io is passed in here
   // Authentication middleware
   io.use((socket, next) => {
     const token = socket.handshake.auth.token;
@@ -75,51 +76,57 @@ exports.setupSocketHandlers = (io) => {
     
     // Game events
     socket.on('game:join', (gameId) => {
+      console.log(`User ${socket.userId} joining game room: game:${gameId}`); // Log join
       socket.join(`game:${gameId}`);
     });
-    
+
     socket.on('game:leave', (gameId) => {
+      console.log(`User ${socket.userId} leaving game room: game:${gameId}`); // Log leave
       socket.leave(`game:${gameId}`);
     });
-    
+
+    // This is triggered by the client after the placeShips API call returns.
+    // The API controller now handles the primary broadcast if the game becomes active.
+    // This listener can remain as a secondary notification or for potential future use.
     socket.on('game:ready', async (gameId) => {
       try {
-        const game = await Game.findById(gameId).populate('players.user', 'username'); // Populate user info
+        // We might not strictly need to fetch/broadcast here anymore if the controller does it,
+        // but it can serve as confirmation or handle edge cases.
+        const game = await Game.findById(gameId)
+            .populate('players.user', 'username')
+            .populate('currentTurn', 'username')
+            .populate('winner', 'username');
+
         if (!game) return;
 
-        // Check if both players are now ready
+        const playerIndex = game.players.findIndex(p => p.user._id.toString() === socket.userId);
+        if (playerIndex === -1 || !game.players[playerIndex].ready) {
+            console.log(`[Socket game:ready] Player ${socket.userId} not found or not ready in game ${gameId}.`);
+            // Optionally handle this case, maybe emit an error back?
+            return;
+        }
+
+        console.log(`[Socket game:ready] Player ${socket.userId} is ready for game ${gameId}.`);
+
+        // Check if the game became active *just now* due to this player becoming ready
+        // (The controller might have already set it to active and broadcasted)
         const allReady = game.players.length === 2 && game.players.every(player => player.ready);
-        if (allReady && game.status === 'setup') {
-           // Update game state (handled by API, but we can broadcast the change)
-           // Let's broadcast the updated game state to both players
-           io.to(`game:${gameId}`).emit('game:state-update', game);
-        } else {
-          // Notify opponent that this player is ready
-          socket.to(`game:${gameId}`).emit('game:opponent-ready');
+
+        if (allReady && game.status === 'active') {
+             console.log(`[Socket game:ready] Both players ready, game ${gameId} is active. Broadcasting state (potentially redundant).`);
+             // Broadcasting here might be redundant if the controller did it, but ensures consistency.
+             io.to(`game:${gameId}`).emit('game:state-update', game);
+        } else if (game.players.length === 2 && game.status === 'setup') {
+             // If the other player isn't ready yet, just notify them.
+             console.log(`[Socket game:ready] Player ${socket.userId} ready, notifying opponent in game ${gameId}.`);
+             socket.to(`game:${gameId}`).emit('game:opponent-ready');
         }
       } catch (error) {
-        console.error('Game ready error:', error);
+        console.error(`[Socket game:ready] Error for game ${gameId}:`, error);
       }
     });
 
-    socket.on('game:move', async ({ gameId, x, y, result }) => { // Expect result from client API call
-      try {
-        const game = await Game.findById(gameId)
-          .populate('players.user', 'username')
-          .populate('currentTurn', 'username')
-          .populate('winner', 'username');
-
-        if (!game) return;
-
-        // Broadcast the move result and the updated game state to both players
-        io.to(`game:${gameId}`).emit('game:state-update', game);
-        // Optionally, emit a specific event for the move result if needed elsewhere
-        // io.to(`game:${gameId}`).emit('game:move-result', { userId: socket.userId, x, y, result });
-
-      } catch (error) {
-        console.error('Game move broadcast error:', error);
-      }
-    });
+    // REMOVED: socket.on('game:move', ...) - Logic moved to controller
 
     // Chat events
     socket.on('chat:message', async ({ gameId, message }) => {
@@ -178,13 +185,67 @@ exports.setupSocketHandlers = (io) => {
         // Mark player as disconnected
         const playerIndex = game.players.findIndex(p => p.user.toString() === socket.userId);
         if (playerIndex !== -1) {
-          game.players[playerIndex].disconnected = true;
-          await game.save();
-          
-          // Notify opponent
-          socket.to(`game:${game._id}`).emit('game:opponent-disconnected');
+          // Check if the game should be abandoned
+          if (game.status === 'active' || game.status === 'setup') {
+             const opponentPlayer = game.players.find(p => p.user.toString() !== socket.userId);
+             if (opponentPlayer) {
+                 game.status = 'abandoned';
+                 game.winner = opponentPlayer.user; // The opponent wins
+                 game.endTime = new Date();
+                 await game.save();
+
+                 // Update stats for abandoned game
+                 await updatePlayerStats(game); // Use the helper function
+
+                 // Fetch populated game to broadcast
+                 const populatedGame = await Game.findById(game._id)
+                    .populate('players.user', 'username')
+                    .populate('currentTurn', 'username')
+                    .populate('winner', 'username');
+
+                 console.log(`[Socket Disconnect] Game ${game._id} abandoned due to user ${socket.userId}. Broadcasting state.`);
+                 io.to(`game:${game._id}`).emit('game:state-update', populatedGame); // Broadcast abandonment
+             }
+          } else {
+             // If game wasn't active/setup, maybe just mark player disconnected without ending game
+             game.players[playerIndex].disconnected = true;
+             await game.save();
+             // Notify opponent without changing game state drastically
+             socket.to(`game:${game._id}`).emit('game:opponent-disconnected'); // Simple notification
+          }
         }
       }
     });
   });
 };
+
+// Add a helper function to get player stats update logic (similar to the one in gameController)
+// This avoids duplicating the logic. Ideally, this logic would live in a service layer.
+async function updatePlayerStats(game) {
+  try {
+    if (!game.winner) return; // Can't update stats without a winner
+
+    const winnerId = game.winner.toString();
+    const loserPlayer = game.players.find(player => player.user.toString() !== winnerId);
+    if (!loserPlayer) return; // Can't find loser
+    const loserId = loserPlayer.user.toString();
+
+    const winner = await User.findById(winnerId);
+    const loser = await User.findById(loserId);
+
+    if (!winner || !loser) return; // User not found
+
+    winner.stats.gamesPlayed = (winner.stats.gamesPlayed || 0) + 1;
+    winner.stats.wins = (winner.stats.wins || 0) + 1;
+    winner.stats.points = (winner.stats.points || 0) + 10;
+
+    loser.stats.gamesPlayed = (loser.stats.gamesPlayed || 0) + 1;
+    loser.stats.losses = (loser.stats.losses || 0) + 1;
+
+    await winner.save();
+    await loser.save();
+    console.log(`Stats updated for game ${game._id}. Winner: ${winner.username}, Loser: ${loser.username}`);
+  } catch (error) {
+    console.error(`Error updating player stats from socket handler for game ${game._id}:`, error);
+  }
+}

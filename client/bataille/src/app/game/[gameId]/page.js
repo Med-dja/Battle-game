@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react'; // Added useCallback, useRef
+import { useState, useEffect, useCallback, useRef, memo } from 'react'; // Add memo import
 import { useParams, useRouter } from 'next/navigation';
 import { toast } from 'react-hot-toast';
 import axios from '@/lib/axios';
@@ -9,6 +9,17 @@ import { useAuth } from '@/context/AuthContext';
 import Button from '@/components/ui/Button';
 import ShipPlacementBoard from '@/components/game/ShipPlacementBoard';
 import ChatBox from '@/components/game/ChatBox'; // Assuming ChatBox takes messages and onSendMessage props
+
+// Use public folder path for sounds in Next.js (no import, just string URLs)
+const hitSoundUrl = '/sounds/hit.mp3';
+const missSoundUrl = '/sounds/miss.mp3';
+const sunkSoundUrl = '/sounds/sunk.mp3';
+const winSoundUrl = '/sounds/win.mp3';
+const loseSoundUrl = '/sounds/lose.mp3';
+const chatSoundUrl = '/sounds/chat.mp3';
+
+// Create a memoized version of ChatBox to prevent unnecessary re-renders
+const MemoizedChatBox = memo(ChatBox);
 
 export default function GamePage() {
   const { gameId } = useParams();
@@ -24,6 +35,8 @@ export default function GamePage() {
   const [opponent, setOpponent] = useState(null);
   const [chatMessages, setChatMessages] = useState([]); // State for chat messages
   const gameRef = useRef(game); // Ref to access latest game state in callbacks
+  // Removed gameVersion state: React should re-render automatically on state changes
+  // const [gameVersion, setGameVersion] = useState(0);
 
   // Update ref whenever game state changes
   useEffect(() => {
@@ -34,7 +47,8 @@ export default function GamePage() {
   const updateGameState = useCallback((newGameData) => {
     if (!user) return; // Ensure user context is available
 
-    setGame(newGameData);
+    const previousStatus = gameRef.current?.status; // Get status before update
+    setGame(newGameData); // Update game state first
 
     const myPlayerIndex = newGameData.players.findIndex(
       player => player.user._id === user._id
@@ -44,50 +58,46 @@ export default function GamePage() {
     if (newGameData.players[opponentPlayerIndex]) {
       setOpponent(newGameData.players[opponentPlayerIndex].user);
     } else {
-      setOpponent(null); // Handle case where opponent leaves?
+      setOpponent(null);
     }
 
     if (myPlayerIndex !== -1) {
-      // setMyShips(newGameData.players[myPlayerIndex].ships || []); // Ships are managed by ShipPlacementBoard until confirmed
       setMyShots(newGameData.players[myPlayerIndex].shots || []);
-
       if (opponentPlayerIndex !== -1 && newGameData.players[opponentPlayerIndex]) {
         setOpponentShots(newGameData.players[opponentPlayerIndex].shots || []);
       } else {
         setOpponentShots([]);
       }
+
+      // Update placingShips state based on the *new* game data
+      const isPlayerReady = newGameData.players[myPlayerIndex].ready;
+      setPlacingShips(newGameData.status === 'setup' && !isPlayerReady);
+
     } else {
-      // User is not in this game? Or spectator? Clear shots.
       setMyShots([]);
       setOpponentShots([]);
+      setPlacingShips(false); // Not a player, cannot be placing ships
     }
 
     setIsMyTurn(
       newGameData.status === 'active' &&
-      newGameData.currentTurn &&
-      newGameData.currentTurn._id === user._id // Compare IDs
+      newGameData.currentTurn?._id === user._id
     );
 
-    setPlacingShips(
-      newGameData.status === 'setup' &&
-      myPlayerIndex !== -1 &&
-      !newGameData.players[myPlayerIndex].ready
-    );
-
-    // Check for game over
-    if (newGameData.status === 'completed' && gameRef.current?.status !== 'completed') {
+    // Check for game over/abandoned state changes to show toast only once
+    if (newGameData.status === 'completed' && previousStatus !== 'completed') {
        const winner = newGameData.winner;
        if (winner) {
          toast.success(winner._id === user._id ? 'Vous avez gagné !' : 'Vous avez perdu !');
        }
-    } else if (newGameData.status === 'abandoned' && gameRef.current?.status !== 'abandoned') {
+    } else if (newGameData.status === 'abandoned' && previousStatus !== 'abandoned') {
        const winner = newGameData.winner;
        if (winner) {
-         toast.info(winner._id === user._id ? 'Votre adversaire a abandonné. Vous avez gagné !' : 'Vous avez abandonné la partie.');
+         toast(winner._id === user._id ? 'Votre adversaire a abandonné. Vous avez gagné !' : 'Vous avez abandonné la partie.');
        }
     }
 
-  }, [user]); // Add user dependency
+  }, [user]); // Keep user dependency
 
 
   const fetchGameData = useCallback(async () => {
@@ -120,32 +130,67 @@ export default function GamePage() {
     }
   }, [gameId, user]);
 
+  // --- Sound effect helpers ---
+  const playSound = useCallback((url) => {
+    if (typeof window !== 'undefined' && url) {
+      const audio = new window.Audio(url);
+      audio.volume = 0.5;
+      audio.play().catch(() => {});
+    }
+  }, []);
 
+  // --- Robust socket listeners for real-time game and chat ---
   const setupSocketListeners = useCallback(() => {
     const socket = getSocket();
     if (!socket || !gameId) return;
 
-    // Clean up previous listeners for this gameId
+    // Remove all listeners for this gameId to avoid duplicates
     socket.off(`game:state-update`);
-    socket.off(`game:opponent-ready`); // Keep if server still sends this separately
+    socket.off(`game:opponent-ready`);
     socket.off(`game:opponent-disconnected`);
     socket.off(`chat:message`);
+    socket.off('connect');
+    socket.off('reconnect');
 
-    // Join game room
-    socket.emit('game:join', gameId);
+    // Always join the room on connect/reconnect
+    const joinRoom = () => {
+      console.log(`[Socket] Joining game room: ${gameId}`);
+      socket.emit('game:join', gameId);
+    };
+    socket.on('connect', joinRoom);
+    socket.on('reconnect', joinRoom);
+    joinRoom();
 
-    // Listen for full game state updates
+    // Listen for full game state updates (moves, ship placement, etc.)
     socket.on(`game:state-update`, (updatedGameData) => {
-      console.log('Received game state update:', updatedGameData);
-      updateGameState(updatedGameData);
+      console.log(`[Socket] Received game update for game ${gameId}:`, updatedGameData);
+
+      // Defensive: ensure all user IDs are strings for comparison
+      if (updatedGameData && updatedGameData.players) {
+        updatedGameData.players = updatedGameData.players.map(player => ({
+          ...player,
+          user: typeof player.user === 'object' && player.user._id ? player.user : { _id: String(player.user) }
+        }));
+      }
+
+      // Defensive: ensure currentTurn and winner are objects with _id
+      if (updatedGameData && updatedGameData.currentTurn && typeof updatedGameData.currentTurn === 'string') {
+        updatedGameData.currentTurn = { _id: updatedGameData.currentTurn };
+      }
+      if (updatedGameData && updatedGameData.winner && typeof updatedGameData.winner === 'string') {
+        updatedGameData.winner = { _id: updatedGameData.winner };
+      }
+
+      // Deep copy to force React state update (paranoia for socket payloads)
+      updateGameState(JSON.parse(JSON.stringify(updatedGameData)));
     });
 
-    // Listen for opponent ready (might be redundant if state-update covers it)
+    // Listen for opponent ready (optional, for legacy support)
     socket.on(`game:opponent-ready`, () => {
-       if (gameRef.current?.status === 'setup') { // Only relevant during setup
-         toast.info('Votre adversaire est prêt !');
-         fetchGameData(); // Refresh to ensure sync, though state-update is preferred
-       }
+      if (gameRef.current?.status === 'setup') {
+        toast('Votre adversaire est prêt !');
+        // No need to fetchGameData if state-update is always sent
+      }
     });
 
     // Listen for opponent disconnection
@@ -155,25 +200,54 @@ export default function GamePage() {
       fetchGameData();
     });
 
-    // Listen for chat messages
+    // Listen for chat messages in real-time
     socket.on(`chat:message`, (message) => {
-      console.log('Received message:', message);
-      // Add message to state, ensuring no duplicates if sender sees their own message
+      playSound(chatSoundUrl);
       setChatMessages((prevMessages) => {
-         // Simple check: if last message is identical, skip. Improve if needed.
-         if (prevMessages.length > 0) {
-            const lastMsg = prevMessages[prevMessages.length - 1];
-            if (lastMsg.sender._id === message.sender._id && lastMsg.content === message.content) {
-               // Potentially duplicate from broadcast, ignore
-               // A more robust check might involve message IDs if available
-               return prevMessages;
-            }
-         }
-         return [...prevMessages, message];
+        // Prevent duplicate messages (by _id if available, else fallback)
+        if (prevMessages.length > 0) {
+          const lastMsg = prevMessages[prevMessages.length - 1];
+          if (
+            (message._id && lastMsg._id === message._id) ||
+            (lastMsg.sender._id === message.sender._id && lastMsg.content === message.content && lastMsg.timestamp === message.timestamp)
+          ) {
+            return prevMessages;
+          }
+        }
+        return [...prevMessages, message];
       });
     });
+  }, [gameId, fetchGameData, updateGameState, playSound]);
 
-  }, [gameId, fetchGameData, updateGameState]); // Add dependencies
+  // Add this effect to log when important game state changes occur
+  useEffect(() => {
+    if (game) {
+      console.log(`[Game state] Status: ${game.status}, My turn: ${isMyTurn}, Shots: ${myShots.length}/${opponentShots.length}`);
+    }
+  }, [game, isMyTurn, myShots, opponentShots]);
+
+  // --- Ensure listeners are always up-to-date and re-setup on reconnect ---
+  useEffect(() => {
+    setupSocketListeners();
+    return () => {
+      cleanup();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameId, user]); // Only re-run when gameId or user changes
+
+  // --- Fetch game and chat data on mount and when user/gameId changes ---
+  useEffect(() => {
+    if (!user && !authLoading) {
+      router.push('/login');
+    }
+    if (user && gameId) {
+      setLoading(true);
+      fetchGameData();
+      fetchChatMessages();
+    }
+    // No cleanup here; handled in socket effect above
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, authLoading, gameId, router]);
 
   const cleanup = useCallback(() => {
     const socket = getSocket();
@@ -186,24 +260,6 @@ export default function GamePage() {
       socket.emit('game:leave', gameId); // Leave the room
     }
   }, [gameId]);
-
-
-  useEffect(() => {
-    if (!user && !authLoading) {
-      router.push('/login');
-    }
-    if (user && gameId) {
-      setLoading(true); // Set loading true when starting data fetch
-      fetchGameData();
-      fetchChatMessages(); // Fetch initial chat messages
-      setupSocketListeners();
-    }
-
-    return () => {
-      cleanup();
-    };
-  }, [user, authLoading, gameId, router, fetchGameData, fetchChatMessages, setupSocketListeners, cleanup]); // Add dependencies
-
 
   const joinGame = async () => {
     // ... (joinGame logic remains mostly the same)
@@ -224,16 +280,13 @@ export default function GamePage() {
     try {
       const response = await axios.put(`/games/${gameId}/ships`, { ships });
       toast.success('Navires placés avec succès !');
-
       // Update local state immediately based on response
       updateGameState(response.data);
-
       // Notify server/opponent via socket (server might handle broadcasting state update)
       const socket = getSocket();
       if (socket) {
         socket.emit('game:ready', gameId);
       }
-
       // No longer need setPlacingShips(false) here, updateGameState handles it
       // No longer need fetchGameData() here if API returns updated state
 
@@ -260,7 +313,6 @@ export default function GamePage() {
       // setIsMyTurn(false); // Assume turn changes
 
       const response = await axios.post(`/games/${gameId}/move`, { x, y });
-
       // API response should contain the updated game state
       const updatedGame = response.data.game;
       const result = response.data.result;
@@ -269,9 +321,12 @@ export default function GamePage() {
       updateGameState(updatedGame);
 
       if (result.hit) {
+        if (result.sunk) playSound(sunkSoundUrl);
+        else playSound(hitSoundUrl);
         toast.success(`Touché${result.sunk ? ' et coulé !' : ' !'}`);
       } else {
-        toast.info('Manqué !');
+        playSound(missSoundUrl);
+        toast('Manqué !');
       }
 
       // Notify opponent via socket, sending the result and updated game state
@@ -322,11 +377,11 @@ export default function GamePage() {
     }
   };
 
-
   // Generate game board grid cells - Adjusted for Responsiveness
   const renderCells = (isMyBoard) => {
     const cells = [];
     const boardSize = game?.boardSize?.width || 10; // Use game data if available
+    const gameStatus = game?.status; // Get current game status
 
     // Add Header Row (A-J)
     cells.push(<div key="corner" className="aspect-square"></div>); // Top-left corner
@@ -348,7 +403,7 @@ export default function GamePage() {
        );
        // Grid Cells for the row
       for (let x = 0; x < boardSize; x++) {
-        let cellClass = 'border border-gray-300 aspect-square relative'; // Use aspect-square for responsiveness
+        let cellClass = 'border border-gray-300 aspect-square relative';
         let content = null;
         let interactionClass = '';
         let shipSegment = null;
@@ -356,27 +411,30 @@ export default function GamePage() {
         if (isMyBoard) {
           // My board - show my ships (if placed) and opponent's shots
           const myPlayer = game?.players.find(p => p.user._id === user._id);
-          shipSegment = myPlayer?.ships?.find(ship =>
-            ship.positions.some(pos => pos.x === x && pos.y === y)
-          );
+          // Only find ship segment if ships exist and placement is done or game active/over
+          if (myPlayer?.ships && (!placingShips || gameStatus !== 'setup')) {
+            shipSegment = myPlayer.ships.find(ship =>
+              ship.positions.some(pos => pos.x === x && pos.y === y)
+            );
+          }
 
+          // Always define shotAtPosition for this cell
           const shotAtPosition = opponentShots.find(shot => shot.x === x && shot.y === y);
 
           if (shipSegment) {
             // Find the specific position to check if hit
             const shipPos = shipSegment.positions.find(pos => pos.x === x && pos.y === y);
-            cellClass += shipPos?.hit ? ' bg-red-700' : ' bg-blue-500'; // Hit ship or intact ship
+            cellClass += shipPos?.hit ? ' bg-red-700' : ' bg-blue-500';
           } else {
-             cellClass += ' bg-blue-100'; // Water
+            cellClass += ' bg-blue-100';
           }
 
           if (shotAtPosition) {
-             // Overlay for shot result
-             content = (
-                <div className={`absolute inset-0 flex items-center justify-center ${shotAtPosition.hit ? 'text-white' : 'text-gray-600'}`}>
-                   <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded-full ${shotAtPosition.hit ? 'bg-white' : 'bg-gray-400'}`}></div>
-                </div>
-             );
+            content = (
+              <div className={`absolute inset-0 flex items-center justify-center ${shotAtPosition.hit ? 'text-white' : 'text-gray-600'}`}>
+                <div className={`w-2 h-2 sm:w-3 sm:h-3 rounded-full ${shotAtPosition.hit ? 'bg-white' : 'bg-gray-400'}`}></div>
+              </div>
+            );
           }
         } else {
           // Opponent's board - show my shots
@@ -384,18 +442,16 @@ export default function GamePage() {
 
           if (shotAtPosition) {
             if (shotAtPosition.hit) {
-              cellClass += ' bg-red-500'; // Hit
-              // Optionally show ship type if sunk info is available
-              // content = <div className="absolute inset-0 flex items-center justify-center text-white text-xs font-bold">{shotAtPosition.shipHit ? shotAtPosition.shipHit.charAt(0).toUpperCase() : 'X'}</div>;
-               content = <div className="absolute inset-0 flex items-center justify-center text-white">X</div>; // Simple hit marker
+              cellClass += ' bg-red-500';
+              content = <div className="absolute inset-0 flex items-center justify-center text-white">X</div>;
             } else {
-              cellClass += ' bg-gray-300'; // Miss
-               content = <div className="absolute inset-0 flex items-center justify-center text-gray-600">•</div>; // Simple miss marker
+              cellClass += ' bg-gray-300';
+              content = <div className="absolute inset-0 flex items-center justify-center text-gray-600">•</div>;
             }
           } else {
-            cellClass += ' bg-blue-100'; // Water
-            if (isMyTurn && game?.status === 'active') {
-               interactionClass = ' hover:bg-blue-200 cursor-pointer'; // Clickable cell
+            cellClass += ' bg-blue-100';
+            if (isMyTurn && gameStatus === 'active') {
+              interactionClass = ' hover:bg-blue-200 cursor-pointer';
             }
           }
         }
@@ -404,36 +460,33 @@ export default function GamePage() {
           <div
             key={`${isMyBoard ? 'my' : 'opp'}-${x}-${y}`}
             className={`${cellClass} ${interactionClass}`}
-            onClick={!isMyBoard && isMyTurn && game?.status === 'active' && !shotAtPosition ? () => makeMove(x, y) : undefined}
+            onClick={
+              !isMyBoard && isMyTurn && gameStatus === 'active' && !myShots.some(shot => shot.x === x && shot.y === y)
+                ? () => makeMove(x, y)
+                : undefined
+            }
           >
             {content}
           </div>
         );
       }
     }
-
     return cells;
   };
 
-
   // --- Loading and Edge Case Rendering ---
-  if (authLoading || (!user && !authLoading)) { // Handle initial auth loading
+  // Show loading spinner if auth is loading OR if game data is loading initially
+  if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
+        {/* Consider using a dedicated loading component/spinner here */}
         <div className="text-xl font-semibold text-gray-700">Chargement...</div>
       </div>
     );
   }
 
-  if (loading && !game) { // Handle initial game data loading
-     return (
-       <div className="flex items-center justify-center min-h-screen">
-         <div className="text-xl font-semibold text-gray-700">Chargement de la partie...</div>
-       </div>
-     );
-   }
-
-  if (!game) { // Handle game not found after loading attempt
+  // Show error if game data failed to load after loading state is false
+  if (!game) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen">
         <div className="text-xl font-semibold mb-4 text-red-600">Partie introuvable ou accès refusé</div>
@@ -443,7 +496,6 @@ export default function GamePage() {
   }
 
   // --- Game State Rendering ---
-
   // Find if current user is actually a player in this game
   const isPlayer = game.players.some(player => player.user._id === user._id);
 
@@ -480,17 +532,20 @@ export default function GamePage() {
   const boardSize = game?.boardSize?.width || 10;
   const gridColsClass = `grid-cols-${boardSize + 1}`; // e.g., grid-cols-11 for 10x10 board + header
 
+  // Remove container padding, handled by layout.js now
   return (
-    <div className="container mx-auto px-2 sm:px-4 py-8">
+    // Removed key={gameVersion}: Let React handle re-renders based on state updates
+    <div className="mx-auto">
       <h1 className="text-xl sm:text-2xl font-bold mb-4 text-center text-gray-800">
-        {game.status === 'setup' ? 'Placement des navires' :
+        {game.status === 'setup' ? (placingShips ? 'Placement des navires' : 'En attente de l\'adversaire...') :
          game.status === 'active' ? `Partie en cours ${opponent ? `contre ${opponent.username}` : ''}${isMyTurn ? ' - À votre tour' : ' - Tour adverse'}` :
          game.status === 'completed' ? `Partie terminée ${opponent ? `contre ${opponent.username}` : ''}` :
          game.status === 'abandoned' ? 'Partie abandonnée' :
          'Bataille Navale'}
       </h1>
 
-      {game.status === 'completed' && (
+      {/* ... Game Over/Abandoned messages ... */}
+       {game.status === 'completed' && (
         <div className="text-center mb-4">
           <div className={`text-xl font-bold ${game.winner?._id === user._id ? 'text-green-600' : 'text-red-600'}`}>
             {game.winner?._id === user._id ? 'Vous avez gagné !' : 'Vous avez perdu !'}
@@ -533,23 +588,26 @@ export default function GamePage() {
                 </div>
                  {isMyTurn && game.status === 'active' && <p className="text-center mt-2 text-blue-600 font-semibold">Cliquez sur une case pour tirer.</p>}
                  {!isMyTurn && game.status === 'active' && <p className="text-center mt-2 text-gray-500">En attente du tir adverse...</p>}
+                 {/* Show waiting message if setup is done but game not active yet */}
+                 {game.status === 'setup' && !placingShips && <p className="text-center mt-2 text-gray-500">En attente de l'adversaire...</p>}
               </div>
             </div>
           )}
         </div>
 
         {/* Chat Area */}
-        <div className="w-full lg:w-1/3 lg:max-h-[600px] flex flex-col flex-shrink"> {/* Adjust height as needed */}
-          <ChatBox
-             gameId={gameId}
-             userId={user._id}
-             messages={chatMessages}
-             onSendMessage={handleSendMessage}
+        {/* Ensure ChatBox itself handles internal scrolling */}
+        <div className="w-full lg:w-1/3 lg:max-h-[600px] flex flex-col flex-shrink bg-white rounded shadow">
+          <MemoizedChatBox
+             gameId={gameId} // Keep gameId if ChatBox needs it for internal logic unrelated to messages
+             userId={user._id} // Pass userId for message alignment
+             messages={chatMessages} // Pass messages state
+             onSendMessage={handleSendMessage} // Pass the send message handler
            />
         </div>
       </div>
 
-      {/* Back Button */}
+      {/* Back Button - Ensure it shows reliably */}
       {(game.status === 'completed' || game.status === 'abandoned') && (
         <div className="flex justify-center mt-8">
           <Button
