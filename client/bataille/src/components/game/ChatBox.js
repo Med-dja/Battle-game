@@ -57,7 +57,7 @@ export default function ChatBox({ gameId, userId, messages, onSendMessage, loadi
       </div>
 
       {/* Render messages received via props */}
-      <div className="flex-grow overflow-y-auto p-4 space-y-3 relative">
+      <div className="flex-grow overflow-y-auto p-4 space-y-3 relative ">
         {loading && ( // Show loading indicator
           <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-75 z-10">
             <svg className="animate-spin h-6 w-6 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -94,7 +94,7 @@ export default function ChatBox({ gameId, userId, messages, onSendMessage, loadi
 
       {/* Predefined messages toggle and list */}
       {showPredefined && (
-        <div className="p-2 border-t grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+        <div className="p-2 border-t grid grid-cols-2 gap-2 max-h-32 overflow-y-auto text-black">
           {' '}
           {/* Added space */}
           {predefinedMessages.map((message, index) => (
@@ -110,7 +110,7 @@ export default function ChatBox({ gameId, userId, messages, onSendMessage, loadi
       )}
 
       {/* Message input form */}
-      <form onSubmit={handleSubmit} className="p-2 border-t flex">
+      <form onSubmit={handleSubmit} className="p-2 border-t flex text-black">
         <button
           type="button"
           title="Messages prédéfinis" // Added title for accessibility

@@ -27,12 +27,12 @@ Avant de commencer, assurez-vous d'avoir installé sur votre système:
    cd tpApp
    ```
 
-2. **Installer les dépendances du serveur**
+2. **Installer les dépendances du serveur (backend)**
    ```bash
    npm install
    ```
 
-3. **Installer les dépendances du client**
+3. **Installer les dépendances du client (frontend)**
    ```bash
   cd client/bataille
   npm install
